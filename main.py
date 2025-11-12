@@ -14,21 +14,29 @@ def get_latest_version():
         versions = response.json()
         return versions[0]  # 最新版本号
     except requests.RequestException as e:
-        print(f"Error fetching versions: {e}")
+        print(f"获取版本号失败: {e}")
         return None
 
 
-# 获取英雄数据
+# 获取中文英雄数据
 def get_champion_data(version):
-    url = f"https://ddragon.leagueoflegends.com/cdn/{version}/data/en_US/champion.json"
+    url = f"https://ddragon.leagueoflegends.com/cdn/{version}/data/zh_CN/champion.json"
     try:
         response = requests.get(url)
         response.raise_for_status()
         data = response.json()
         champions = data["data"]
-        return {name: champ["id"] for name, champ in champions.items()}
+        # 返回 id 映射到 中文信息
+        return {
+            champ["id"]: {
+                "title": champ["title"],  # 英雄称号（显示在图标下）
+                "name": champ["name"],    # 英雄中文名（如 暗裔剑魔）
+                "blurb": champ["blurb"]   # 简介
+            }
+            for champ in champions.values()
+        }
     except requests.RequestException as e:
-        print(f"Error fetching champion data: {e}")
+        print(f"获取英雄数据失败: {e}")
         return {}
 
 
@@ -46,38 +54,38 @@ def download_icon(champion_id, version):
                 for chunk in response.iter_content(1024):
                     f.write(chunk)
         except requests.RequestException as e:
-            print(f"Failed to download icon for {champion_id}: {e}")
+            print(f"下载图标失败 {champion_id}: {e}")
             return None
     return file_path
 
 
-# 缓存所有图标并更新进度条
+# 缓存图标并更新进度条
 def cache_icons():
     global champions, version
     version = get_latest_version()
     if not version:
-        progress_label.config(text="Failed to fetch latest version.")
+        progress_label.config(text="❌ 获取版本号失败")
         return
 
     champions = get_champion_data(version)
     if not champions:
-        progress_label.config(text="Failed to fetch champion data.")
+        progress_label.config(text="❌ 获取英雄数据失败")
         return
 
-    total_champions = len(champions)
-    champion_count_label.config(text=f"当前版本全英雄数量为: {total_champions}")
-    progress_bar["maximum"] = total_champions
+    total = len(champions)
+    champion_count_label.config(text=f"当前版本全英雄数量: {total}")
+    progress_bar["maximum"] = total
     count = 0
 
-    for name, champ_id in champions.items():
+    for champ_id in champions.keys():
         download_icon(champ_id, version)
         count += 1
         progress_bar["value"] = count
-        progress_label.config(text=f"首次使用正在缓存英雄图标~未响应也请耐心等待喵~(约2~3分钟): {count}/{total_champions}")
+        progress_label.config(text=f"首次使用正在缓存英雄图标中，请稍候喵... {count}/{total}")
         root.update_idletasks()
 
-    progress_label.config(text="图标缓存完成喵!")
-    start_button.config(state="normal")  # 启用功能按钮
+    progress_label.config(text="✅ 图标缓存完成喵！")
+    start_button.config(state="normal")
 
 
 # 随机选择英雄
@@ -85,89 +93,97 @@ def select_random_champions(champions, count):
     return random.sample(list(champions.items()), count)
 
 
-# 动态调整布局并显示图标，每行固定显示10个英雄
+# 点击头像显示英雄信息
+def show_champion_info(info):
+    messagebox.showinfo(
+        title=info["title"],
+        message=f"{info['name']}\n\n{info['blurb']}"
+    )
+
+
+# 显示图标（中文标题）
 def display_champions(selected):
     for widget in canvas_frame.winfo_children():
         widget.destroy()
 
-    max_icons_per_row = 10  # 每行显示的最大图标数量
+    max_icons_per_row = 10
     row, col = 0, 0
 
-    for name, champ_id in selected:
+    for champ_id, info in selected:
         icon_path = f"icons/{champ_id}.png"
-        if icon_path and os.path.exists(icon_path):
+        if os.path.exists(icon_path):
             img = Image.open(icon_path).resize((64, 64))
             photo = ImageTk.PhotoImage(img)
-            label = tk.Label(canvas_frame, image=photo, text=name, compound="top")
-            label.image = photo
-            label.grid(row=row, column=col, padx=10, pady=10)
+            btn = tk.Button(
+                canvas_frame,
+                image=photo,
+                text=info["title"],  # 中文称号
+                compound="top",
+                command=lambda c=info: show_champion_info(c)
+            )
+            btn.image = photo
+            btn.grid(row=row, column=col, padx=10, pady=10)
 
         col += 1
-        if col >= max_icons_per_row:  # 换行逻辑：每10个图标强制换行
+        if col >= max_icons_per_row:
             col = 0
             row += 1
 
-    # 更新滚动区域
     canvas.update_idletasks()
     canvas.config(scrollregion=canvas.bbox("all"))
 
 
-# 按钮事件：随机选择
+# 随机选择事件
 def on_select():
     try:
         count = int(entry.get())
         if count > len(champions):
-            messagebox.showwarning("Warning", "Number exceeds total champions!")
+            messagebox.showwarning("警告", "输入数量超过英雄总数！")
         else:
             selected = select_random_champions(champions, count)
             display_champions(selected)
     except ValueError:
-        messagebox.showerror("Error", "Please enter a valid number.")
+        messagebox.showerror("错误", "请输入有效数字！")
 
 
-# 按钮事件：显示所有英雄
+# 显示全部英雄
 def show_all_champions():
     display_champions(list(champions.items()))
 
 
-# 初始化目录
+# 初始化 icons 文件夹
 if not os.path.exists("icons"):
     os.makedirs("icons")
 
-# 初始化主窗口
+# 创建主窗口
 root = tk.Tk()
-root.title("大乱斗比赛专用随机选择器--By南京大学电竞社NJU丶黑喵喵")
+root.title("大乱斗随机英雄选择器 — By 南京大学电竞社 黑喵喵")
 root.geometry("1260x800")
 
 # 设置窗口图标
-icon_path = "D:/ARAM/gwenicon.png"  # 图标路径
+icon_path = r"D:\Mygithub\ARAM_Random_Champions\gwenicon.png"
 if os.path.exists(icon_path):
     icon_image = ImageTk.PhotoImage(file=icon_path)
     root.iconphoto(True, icon_image)
-else:
-    print(f"图标文件未找到: {icon_path}")
 
-# 顶部进度条与状态显示
+# 顶部信息与进度条
 progress_label = tk.Label(root, text="初始化中喵...")
 progress_label.pack(pady=10)
+
 progress_bar = ttk.Progressbar(root, orient="horizontal", length=400, mode="determinate")
 progress_bar.pack(pady=10)
 
-champion_count_label = tk.Label(root, text="Total Champions: 0")
+champion_count_label = tk.Label(root, text="当前版本全英雄数量: 0")
 champion_count_label.pack(pady=10)
 
-# 缓存完成后启用的功能按钮
+# 主功能按钮
 start_button = tk.Button(root, text="战斗，爽！", state="disabled", command=lambda: start_selection())
 start_button.pack(pady=10)
 
-# 主功能区
-top_frame = tk.Frame(root)
-
-# 创建滚动区域
+# 滚动区
 canvas = tk.Canvas(root)
 scrollbar = ttk.Scrollbar(root, orient="vertical", command=canvas.yview)
 canvas_frame = tk.Frame(canvas)
-
 canvas.create_window((0, 0), window=canvas_frame, anchor="nw")
 canvas.config(yscrollcommand=scrollbar.set)
 
@@ -181,21 +197,25 @@ def configure_scroll_region(event):
 
 canvas_frame.bind("<Configure>", configure_scroll_region)
 
+# 顶部输入区
+top_frame = tk.Frame(root)
 
-# 开始选择英雄
+
 def start_selection():
-    # 防止重复创建输入窗口
     if top_frame.winfo_children():
         return
-
     top_frame.pack(pady=20)
     tk.Label(top_frame, text="输入随机英雄数量:").pack(side="left")
     global entry
     entry = tk.Entry(top_frame, width=5)
     entry.pack(side="left", padx=10)
     tk.Button(top_frame, text="随机选择", command=on_select).pack(side="left")
-    tk.Button(top_frame, text="显示所有英雄", command=show_all_champions).pack(side="left")
+    tk.Button(top_frame, text="显示全部英雄", command=show_all_champions).pack(side="left")
 
 
+# 启动缓存
 root.after(100, cache_icons)
 root.mainloop()
+
+# cd /d D:\Mygithub\ARAM_Random_Champions
+# python -m PyInstaller --noconsole --onefile --add-data "icons;icons" --icon "gwenicon.png" main.py
